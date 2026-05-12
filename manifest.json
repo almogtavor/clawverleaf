@@ -1,0 +1,37 @@
+{
+  "manifest_version": 3,
+  "name": "Clawverleaf",
+  "version": "0.1.0",
+  "description": "Inline AI edits for Overleaf using your Claude or ChatGPT subscription session.",
+  "permissions": ["storage", "scripting"],
+  "host_permissions": [
+    "https://www.overleaf.com/*",
+    "https://*.overleaf.com/*",
+    "https://claude.ai/*",
+    "https://chatgpt.com/*"
+  ],
+  "background": {
+    "service_worker": "src/background/service-worker.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.overleaf.com/project/*",
+        "https://*.overleaf.com/project/*"
+      ],
+      "js": ["src/content/overleaf.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["src/content/page-bridge.js"],
+      "matches": ["https://*.overleaf.com/*", "https://www.overleaf.com/*"]
+    }
+  ],
+  "options_ui": {
+    "page": "src/options/options.html",
+    "open_in_tab": true
+  }
+}

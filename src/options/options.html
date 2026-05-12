@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Clawverleaf settings</title>
+  <link rel="stylesheet" href="options.css" />
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Clawverleaf</h1>
+      <p class="subtitle">Inline AI edits for Overleaf.</p>
+    </header>
+
+    <section class="card">
+      <h2>Provider</h2>
+      <p class="muted">Pick how this extension should reach the model.</p>
+      <div class="options" role="radiogroup">
+        <label class="option">
+          <input type="radio" name="provider" value="claude-session" />
+          <div>
+            <div class="opt-title">Claude — claude.ai session</div>
+            <div class="opt-desc">Uses your logged-in claude.ai cookies and your Pro/Max rate limits. May violate Anthropic's ToS.</div>
+          </div>
+        </label>
+        <label class="option">
+          <input type="radio" name="provider" value="claude-api" />
+          <div>
+            <div class="opt-title">Claude — Anthropic API key</div>
+            <div class="opt-desc">Pay-per-token via api.anthropic.com. Stable and ToS-clean.</div>
+          </div>
+        </label>
+        <label class="option">
+          <input type="radio" name="provider" value="chatgpt-session" />
+          <div>
+            <div class="opt-title">ChatGPT — chatgpt.com session</div>
+            <div class="opt-desc">Uses your logged-in chatgpt.com cookies. May fail with proof-of-work; falls back to a clear error.</div>
+          </div>
+        </label>
+        <label class="option">
+          <input type="radio" name="provider" value="chatgpt-api" />
+          <div>
+            <div class="opt-title">ChatGPT — OpenAI API key</div>
+            <div class="opt-desc">Pay-per-token via api.openai.com. Stable.</div>
+          </div>
+        </label>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>API keys</h2>
+      <div class="field">
+        <label for="anthropicApiKey">Anthropic API key</label>
+        <input id="anthropicApiKey" type="password" autocomplete="off" placeholder="sk-ant-..." />
+      </div>
+      <div class="field">
+        <label for="anthropicModel">Anthropic model</label>
+        <input id="anthropicModel" type="text" placeholder="claude-opus-4-7" />
+      </div>
+      <div class="field">
+        <label for="openaiApiKey">OpenAI API key</label>
+        <input id="openaiApiKey" type="password" autocomplete="off" placeholder="sk-..." />
+      </div>
+      <div class="field">
+        <label for="openaiModel">OpenAI model</label>
+        <input id="openaiModel" type="text" placeholder="gpt-4o" />
+      </div>
+      <p class="muted small">Stored in <code>chrome.storage.local</code> on this device only.</p>
+    </section>
+
+    <section class="card">
+      <div class="row">
+        <button id="save" class="btn-primary">Save</button>
+        <button id="probe" class="btn">Test connection</button>
+        <span id="status" class="status"></span>
+      </div>
+    </section>
+
+    <footer class="footnote">
+      <p>Trigger: select text inside an Overleaf editor, click the Edit pill, type the change.</p>
+    </footer>
+  </main>
+  <script src="options.js"></script>
+</body>
+</html>
