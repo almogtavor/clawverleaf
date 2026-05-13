@@ -11,10 +11,19 @@
     'chatgpt-session': 'ChatGPT (session)',
     'chatgpt-api': 'ChatGPT (API key)'
   };
+  const DEFAULT_CONFIG = {
+    provider: 'claude-session',
+    anthropicApiKey: '',
+    anthropicModel: 'claude-opus-4-7',
+    openaiApiKey: '',
+    openaiModel: 'gpt-4o'
+  };
 
   let pillEl = null;
   let panelHost = null;
   let activePanel = null;
+  let selectionUpdateTimer = null;
+  let selectionUpdateSeq = 0;
 
   document.addEventListener('selectionchange', onSelectionChange);
   document.addEventListener('mousedown', (e) => {
@@ -23,7 +32,6 @@
   });
 
   function onSelectionChange() {
-    if (activePanel) return;
     const sel = window.getSelection();
     if (!sel || sel.isCollapsed || !sel.toString().trim()) return hidePill();
     const range = sel.getRangeAt(0);
@@ -33,14 +41,18 @@
     if (!cmContent) return hidePill();
     const rect = range.getBoundingClientRect();
     if (!rect || (!rect.width && !rect.height)) return hidePill();
-    showPill(rect);
+    if (activePanel) {
+      showPill(rect, 'Use selection');
+      schedulePanelSelectionUpdate();
+      return;
+    }
+    showPill(rect, '✎  Edit');
   }
 
-  function showPill(rect) {
+  function showPill(rect, label) {
     if (!pillEl) {
       pillEl = document.createElement('div');
       pillEl.id = 'clawverleaf-pill';
-      pillEl.textContent = '✎  Edit';
       pillEl.style.cssText = pillCss();
       pillEl.addEventListener('mousedown', (e) => {
         e.preventDefault();
@@ -53,6 +65,7 @@
       });
       document.body.appendChild(pillEl);
     }
+    pillEl.textContent = label || '✎  Edit';
     const top = window.scrollY + rect.top - 36;
     const left = window.scrollX + rect.right - 70;
     pillEl.style.top = `${Math.max(window.scrollY + 8, top)}px`;
@@ -71,6 +84,11 @@
       flash('No selection found in the editor.');
       return;
     }
+    if (activePanel) {
+      activePanel.setSelection(selection);
+      activePanel.focusInput();
+      return;
+    }
     const fullDoc = await bridge('getDoc');
     if (typeof fullDoc !== 'string') {
       flash('Could not read document text.');
@@ -82,17 +100,27 @@
 
   async function getConfig() {
     return new Promise((resolve) => {
-      chrome.storage.local.get(
-        {
-          provider: 'claude-session',
-          anthropicApiKey: '',
-          anthropicModel: 'claude-opus-4-7',
-          openaiApiKey: '',
-          openaiModel: 'gpt-4o'
-        },
-        resolve
-      );
+      const storage = getStorageLocal();
+      if (!storage || typeof storage.get !== 'function') {
+        resolve(Object.assign({}, DEFAULT_CONFIG));
+        return;
+      }
+      storage.get(DEFAULT_CONFIG, (cfg) => resolve(Object.assign({}, DEFAULT_CONFIG, cfg || {})));
     });
+  }
+
+  async function setConfig(values) {
+    return new Promise((resolve) => {
+      const storage = getStorageLocal();
+      if (!storage || typeof storage.set !== 'function') return resolve();
+      storage.set(values, resolve);
+    });
+  }
+
+  function getStorageLocal() {
+    return typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local
+      ? chrome.storage.local
+      : null;
   }
 
   function mountPanel(ctx) {
@@ -112,6 +140,18 @@
     activePanel.start();
   }
 
+  function schedulePanelSelectionUpdate() {
+    clearTimeout(selectionUpdateTimer);
+    const seq = ++selectionUpdateSeq;
+    selectionUpdateTimer = setTimeout(async () => {
+      try {
+        const selection = await bridge('getSelection');
+        if (seq !== selectionUpdateSeq || !activePanel || !selection || !selection.text.trim()) return;
+        activePanel.setSelection(selection);
+      } catch {}
+    }, 120);
+  }
+
   class Panel {
     constructor(shadow, ctx, onClose) {
       this.shadow = shadow;
@@ -123,7 +163,10 @@
       this.providerSel = shadow.getElementById('cw-provider');
       this.subtitle = shadow.getElementById('cw-subtitle');
       this.closeBtn = shadow.getElementById('cw-close');
+      this.previewBox = shadow.getElementById('cw-selection-preview');
+      this.selectionMeta = shadow.getElementById('cw-selection-meta');
       this.lastSuggestion = null;
+      this.lastPromptSelectionKey = null;
       this.firstTurn = true;
     }
 
@@ -132,16 +175,14 @@
       this.providerSel.value = config.provider;
       this.providerSel.addEventListener('change', () => {
         this.ctx.config.provider = this.providerSel.value;
-        chrome.storage.local.set({ provider: this.providerSel.value });
+        setConfig({ provider: this.providerSel.value });
         this.subtitle.textContent = PROVIDER_LABELS[this.providerSel.value] || this.providerSel.value;
+        this.firstTurn = true;
+        this.lastPromptSelectionKey = null;
       });
       this.subtitle.textContent = PROVIDER_LABELS[config.provider] || config.provider;
 
-      const previewBox = this.shadow.getElementById('cw-selection-preview');
-      const collapse = selection.text.length > 600 ? selection.text.slice(0, 600) + '…' : selection.text;
-      previewBox.textContent = collapse;
-      const meta = this.shadow.getElementById('cw-selection-meta');
-      meta.textContent = `${selection.text.length} chars · chars ${selection.from}–${selection.to}`;
+      this.renderSelection(selection);
 
       this.closeBtn.addEventListener('click', () => this.onClose());
       this.shadow.addEventListener('keydown', (e) => {
@@ -156,6 +197,23 @@
       });
       this.input.focus();
       this.makeDraggable();
+      this.makeResizable();
+    }
+
+    focusInput() {
+      this.input.focus();
+    }
+
+    setSelection(selection) {
+      if (!selection || !selection.text || !selection.text.trim()) return;
+      this.ctx.selection = selection;
+      this.renderSelection(selection);
+    }
+
+    renderSelection(selection) {
+      const collapse = selection.text.length > 600 ? selection.text.slice(0, 600) + '…' : selection.text;
+      this.previewBox.textContent = collapse;
+      this.selectionMeta.textContent = `${selection.text.length} chars · chars ${selection.from}–${selection.to}`;
     }
 
     makeDraggable() {
@@ -180,18 +238,97 @@
       window.addEventListener('mouseup', () => { dragging = false; });
     }
 
+    makeResizable() {
+      const panel = this.shadow.getElementById('cw-panel');
+      const handles = this.shadow.querySelectorAll('[data-resize]');
+      let resizing = false;
+      let dir = '';
+      let sx = 0, sy = 0, sw = 0, sh = 0, ox = 0, oy = 0;
+      let prevCursor = '';
+      let prevUserSelect = '';
+      const minWidth = 360;
+      const minHeight = 320;
+
+      handles.forEach((handle) => {
+        handle.addEventListener('mousedown', (e) => {
+          resizing = true;
+          dir = handle.dataset.resize || '';
+          const rect = panel.getBoundingClientRect();
+          sx = e.clientX; sy = e.clientY; sw = rect.width; sh = rect.height;
+          ox = rect.left; oy = rect.top;
+          panel.style.left = `${ox}px`;
+          panel.style.top = `${oy}px`;
+          panel.style.right = 'auto';
+          panel.style.bottom = 'auto';
+          panel.style.width = `${sw}px`;
+          panel.style.height = `${sh}px`;
+          prevCursor = document.body.style.cursor;
+          prevUserSelect = document.body.style.userSelect;
+          document.body.style.cursor = getComputedStyle(handle).cursor;
+          document.body.style.userSelect = 'none';
+          e.preventDefault();
+          e.stopPropagation();
+        });
+      });
+
+      window.addEventListener('mousemove', (e) => {
+        if (!resizing) return;
+        const dx = e.clientX - sx;
+        const dy = e.clientY - sy;
+        const minLeft = 8;
+        const minTop = 8;
+        const maxRight = window.innerWidth - 8;
+        const maxBottom = window.innerHeight - 8;
+        let left = ox;
+        let top = oy;
+        let width = sw;
+        let height = sh;
+
+        if (dir.includes('e')) {
+          width = Math.min(maxRight - ox, Math.max(minWidth, sw + dx));
+        }
+        if (dir.includes('s')) {
+          height = Math.min(maxBottom - oy, Math.max(minHeight, sh + dy));
+        }
+        if (dir.includes('w')) {
+          left = Math.min(ox + sw - minWidth, Math.max(minLeft, ox + dx));
+          width = ox + sw - left;
+        }
+        if (dir.includes('n')) {
+          top = Math.min(oy + sh - minHeight, Math.max(minTop, oy + dy));
+          height = oy + sh - top;
+        }
+
+        panel.style.left = `${left}px`;
+        panel.style.top = `${top}px`;
+        panel.style.width = `${width}px`;
+        panel.style.height = `${height}px`;
+      });
+
+      window.addEventListener('mouseup', () => {
+        if (!resizing) return;
+        resizing = false;
+        dir = '';
+        document.body.style.cursor = prevCursor;
+        document.body.style.userSelect = prevUserSelect;
+      });
+    }
+
     async submit() {
       const text = this.input.value.trim();
       if (!text) return;
+      const target = Object.assign({}, this.ctx.selection);
+      const targetKey = selectionKey(target);
       this.input.value = '';
       this.input.disabled = true;
       this.send.disabled = true;
       this.appendUser(text);
       const loadingEl = this.appendLoading();
       try {
-        const prompt = this.firstTurn ? this.buildFirstPrompt(text) : this.buildRefinePrompt(text);
-        this.firstTurn = false;
+        const prompt = this.buildPrompt(text, target, targetKey);
         const reply = await this.callProvider(prompt);
+        this.firstTurn = false;
+        this.lastPromptSelectionKey = targetKey;
         loadingEl.remove();
         const replacement = parseEditBlock(reply);
         if (replacement === null) {
@@ -201,7 +338,7 @@
           );
         } else {
           this.lastSuggestion = replacement;
-          this.appendDiff(this.ctx.selection.text, replacement);
+          this.appendDiff(target.text, replacement, target);
         }
       } catch (err) {
         loadingEl.remove();
@@ -213,7 +350,13 @@
       }
     }
 
-    buildFirstPrompt(instruction) {
+    buildPrompt(instruction, selection, targetKey) {
+      if (this.firstTurn) return this.buildFirstPrompt(instruction, selection);
+      if (this.lastPromptSelectionKey === targetKey) return this.buildRefinePrompt(instruction);
+      return this.buildNewSelectionPrompt(instruction, selection);
+    }
+
+    buildFirstPrompt(instruction, selection = this.ctx.selection) {
       return [
         'You are editing one selected snippet of a LaTeX document. The full document is provided for context, then the selected snippet, then the user instruction.',
         '',
@@ -229,7 +372,31 @@
         '=== END FULL DOCUMENT ===',
         '',
         '=== SELECTED SNIPPET ===',
-        this.ctx.selection.text,
+        selection.text,
+        '=== END SELECTED SNIPPET ===',
+        '',
+        '=== INSTRUCTION ===',
+        instruction,
+        '=== END INSTRUCTION ===',
+        '',
+        'Reply with the replacement only, between <<<EDIT>>> and <<</EDIT>>>.'
+      ].join('\n');
+    }
+
+    buildNewSelectionPrompt(instruction, selection) {
+      return [
+        'Continue editing the same LaTeX document from the earlier context.',
+        'The user has selected a different snippet. The full document is not repeated; only the newly selected snippet is provided.',
+        '',
+        'Output rules (strict):',
+        '- Output ONLY the replacement text for the selected snippet, nothing else.',
+        '- Wrap the replacement between the exact markers <<<EDIT>>> and <<</EDIT>>> on their own lines.',
+        '- Do not include backticks, code fences, comments, or explanation outside the markers.',
+        '- Preserve LaTeX commands and environments unless the instruction asks otherwise.',
+        '- Do not modify content outside the selected snippet.',
+        '',
+        '=== SELECTED SNIPPET ===',
+        selection.text,
         '=== END SELECTED SNIPPET ===',
         '',
         '=== INSTRUCTION ===',
@@ -302,7 +469,8 @@
       this.thread.scrollTop = this.thread.scrollHeight;
     }
 
-    appendDiff(before, after) {
+    appendDiff(before, after, target) {
+      const targetKey = selectionKey(target);
       const row = document.createElement('div');
       row.className = 'cw-msg cw-msg-ai';
       const card = document.createElement('div');
@@ -335,13 +503,20 @@
         reject.disabled = true;
         try {
           await bridge('replaceRange', {
-            from: this.ctx.selection.from,
-            to: this.ctx.selection.to,
+            from: target.from,
+            to: target.to,
             text: after
           });
+          this.updateStoredDocument(target, after);
           head.textContent = 'Applied';
           card.classList.add('cw-diff-applied');
-          setTimeout(() => this.onClose(), 600);
+          if (selectionKey(this.ctx.selection) === targetKey) {
+            this.setSelection({
+              from: target.from,
+              to: target.from + after.length,
+              text: after
+            });
+          }
         } catch (err) {
           this.appendError('Apply failed: ', String(err));
           approve.disabled = false;
@@ -359,6 +534,12 @@
       row.appendChild(card);
       this.thread.appendChild(row);
       this.thread.scrollTop = this.thread.scrollHeight;
+    }
+
+    updateStoredDocument(target, replacement) {
+      if (typeof this.ctx.fullDoc !== 'string') return;
+      if (this.ctx.fullDoc.slice(target.from, target.to) !== target.text) return;
+      this.ctx.fullDoc = this.ctx.fullDoc.slice(0, target.from) + replacement + this.ctx.fullDoc.slice(target.to);
     }
   }
 
@@ -417,22 +598,27 @@
     return s.replace(/^\r?\n/, '').replace(/\r?\n$/, '');
   }
 
-  function tokenize(s) {
-    return s.match(/\s+|[A-Za-z0-9]+|[^\s\w]+|_+/g) || [];
+  function selectionKey(selection) {
+    return `${selection.from}:${selection.to}:${selection.text}`;
   }
 
-  function lcsDiff(ta, tb) {
+  function tokenize(s) {
+    return s.match(/\s+|[A-Za-z0-9]+|_+|[^\s\w]/g) || [];
+  }
+
+  function lcsDiff(ta, tb, same) {
+    const isSame = same || ((a, b) => a === b);
     const m = ta.length, n = tb.length;
     const dp = Array.from({ length: m + 1 }, () => new Uint32Array(n + 1));
     for (let i = m - 1; i >= 0; i--) {
       for (let j = n - 1; j >= 0; j--) {
-        dp[i][j] = ta[i] === tb[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+        dp[i][j] = isSame(ta[i], tb[j]) ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
       }
     }
     const out = [];
     let i = 0, j = 0;
     while (i < m && j < n) {
-      if (ta[i] === tb[j]) { out.push({ op: '=', text: ta[i] }); i++; j++; }
+      if (isSame(ta[i], tb[j])) { out.push({ op: '=', text: ta[i] }); i++; j++; }
       else if (dp[i + 1][j] >= dp[i][j + 1]) { out.push({ op: '-', text: ta[i] }); i++; }
       else { out.push({ op: '+', text: tb[j] }); j++; }
     }
@@ -441,9 +627,13 @@
     return out;
   }
 
+  function sameDiffToken(a, b) {
+    return a === b && !/^\s+$/.test(a);
+  }
+
   function renderDiff(before, after, container) {
-    const al = before.split('\n');
-    const bl = after.split('\n');
+    const al = before.split(/\r?\n/);
+    const bl = after.split(/\r?\n/);
     if (al.length + bl.length > 400 || before.length + after.length > 20000) {
       renderLineFallback(before, after, container);
       return;
@@ -459,40 +649,67 @@
         i++;
         continue;
       }
-      const next = lineDiff[i + 1];
-      if (cur.op === '-' && next && next.op === '+') {
-        renderPairedLines(cur.text, next.text, container);
-        i += 2;
-      } else if (cur.op === '-') {
-        const row = mkRow('del', '-');
-        appendTok(row, cur.text || ' ', 'cw-tok-del');
-        container.appendChild(row);
-        i++;
-      } else {
-        const row = mkRow('add', '+');
-        appendTok(row, cur.text || ' ', 'cw-tok-add');
-        container.appendChild(row);
+
+      const delLines = [];
+      const addLines = [];
+      while (i < lineDiff.length && lineDiff[i].op !== '=') {
+        if (lineDiff[i].op === '-') delLines.push(lineDiff[i].text);
+        else addLines.push(lineDiff[i].text);
         i++;
       }
+      renderChangedBlock(delLines, addLines, container);
     }
   }
 
-  function renderPairedLines(delLine, addLine, container) {
-    const inner = lcsDiff(tokenize(delLine), tokenize(addLine));
-    const oldRow = mkRow('del', '-');
-    const newRow = mkRow('add', '+');
-    for (const t of inner) {
-      if (t.op === '=') {
-        appendTok(oldRow, t.text, 'cw-tok-eq');
-        appendTok(newRow, t.text, 'cw-tok-eq');
-      } else if (t.op === '-') {
-        appendTok(oldRow, t.text, 'cw-tok-del');
-      } else {
-        appendTok(newRow, t.text, 'cw-tok-add');
-      }
+  function renderChangedBlock(delLines, addLines, container) {
+    const delText = delLines.join('\n');
+    const addText = addLines.join('\n');
+    if (delLines.length && addLines.length) {
+      const inner = lcsDiff(tokenize(delText), tokenize(addText), sameDiffToken);
+      renderTokenSide(inner, 'del', container);
+      renderTokenSide(inner, 'add', container);
+      return;
     }
-    container.appendChild(oldRow);
-    container.appendChild(newRow);
+
+    if (delLines.length) renderTextRows(delText, 'del', 'cw-tok-del', container);
+    if (addLines.length) renderTextRows(addText, 'add', 'cw-tok-add', container);
+  }
+
+  function renderTokenSide(diff, kind, container) {
+    const state = { row: null, kind, container };
+    for (const t of diff) {
+      if (kind === 'del' && t.op === '+') continue;
+      if (kind === 'add' && t.op === '-') continue;
+      const changed = t.op !== '=' && !/^\s+$/.test(t.text);
+      const cls = changed ? `cw-tok-${kind}` : 'cw-tok-eq';
+      appendSegment(state, t.text, cls);
+    }
+    ensureDiffRow(state);
+  }
+
+  function renderTextRows(text, kind, cls, container) {
+    const state = { row: null, kind, container };
+    for (const part of tokenize(text)) {
+      appendSegment(state, part, /^\s+$/.test(part) ? 'cw-tok-eq' : cls);
+    }
+    ensureDiffRow(state);
+  }
+
+  function ensureDiffRow(state) {
+    if (!state.row) {
+      state.row = mkRow(state.kind, state.kind === 'del' ? '-' : '+');
+      state.container.appendChild(state.row);
+    }
+    return state.row;
+  }
+
+  function appendSegment(state, text, cls) {
+    const parts = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+    for (let i = 0; i < parts.length; i++) {
+      if (i > 0) state.row = null;
+      if (parts[i]) appendTok(ensureDiffRow(state), parts[i], cls);
+      else ensureDiffRow(state);
+    }
   }
 
   function mkRow(kind, sigil) {
@@ -581,6 +798,14 @@
           <textarea id="cw-input" rows="2" placeholder="What change should I make? (Cmd/Ctrl+Enter to send)"></textarea>
           <button id="cw-send" class="cw-btn cw-btn-primary">Send</button>
         </footer>
+        <div class="cw-resize cw-resize-n" data-resize="n" title="Resize"></div>
+        <div class="cw-resize cw-resize-e" data-resize="e" title="Resize"></div>
+        <div class="cw-resize cw-resize-s" data-resize="s" title="Resize"></div>
+        <div class="cw-resize cw-resize-w" data-resize="w" title="Resize"></div>
+        <div class="cw-resize cw-resize-ne" data-resize="ne" title="Resize"></div>
+        <div class="cw-resize cw-resize-se" data-resize="se" title="Resize"></div>
+        <div class="cw-resize cw-resize-sw" data-resize="sw" title="Resize"></div>
+        <div class="cw-resize cw-resize-nw" data-resize="nw" title="Resize"></div>
       </div>
     `;
   }
@@ -595,10 +820,15 @@
         position: fixed;
         right: 24px;
         bottom: 24px;
-        width: 460px;
-        max-height: min(640px, calc(100vh - 48px));
+        width: min(460px, calc(100vw - 32px));
+        height: min(640px, calc(100vh - 48px));
+        min-width: 360px;
+        min-height: 320px;
+        max-width: calc(100vw - 16px);
+        max-height: calc(100vh - 16px);
         display: flex;
         flex-direction: column;
+        overflow: hidden;
         background: var(--bg);
         color: var(--fg);
         border: 1px solid var(--border);
@@ -705,7 +935,7 @@
       }
       .cw-msg { display: flex; }
       .cw-msg-user { justify-content: flex-end; }
-      .cw-msg-ai { justify-content: flex-start; }
+      .cw-msg-ai { justify-content: flex-start; min-width: 0; }
       .cw-bubble {
         max-width: 90%;
         padding: 8px 10px;
@@ -746,6 +976,7 @@
 
       .cw-diff-card {
         width: 100%;
+        min-width: 0;
         background: var(--surface);
         border: 1px solid var(--border);
         border-radius: 10px;
@@ -793,12 +1024,18 @@
         color: var(--del-fg);
         border-radius: 3px;
         padding: 0 2px;
+        font-weight: 700;
+        box-decoration-break: clone;
+        -webkit-box-decoration-break: clone;
       }
       .cw-tok-add {
         background: var(--add-strong);
         color: var(--add-fg);
         border-radius: 3px;
         padding: 0 2px;
+        font-weight: 700;
+        box-decoration-break: clone;
+        -webkit-box-decoration-break: clone;
       }
 
       .cw-diff-actions {
@@ -829,6 +1066,74 @@
         border-color: var(--accent);
       }
       .cw-btn-primary:hover { opacity: 0.9; background: var(--accent); }
+
+      .cw-resize {
+        position: absolute;
+        z-index: 3;
+      }
+      .cw-resize-n {
+        top: 0;
+        left: 14px;
+        right: 14px;
+        height: 8px;
+        cursor: ns-resize;
+      }
+      .cw-resize-e {
+        top: 14px;
+        right: 0;
+        bottom: 14px;
+        width: 8px;
+        cursor: ew-resize;
+      }
+      .cw-resize-s {
+        left: 14px;
+        right: 14px;
+        bottom: 0;
+        height: 8px;
+        cursor: ns-resize;
+      }
+      .cw-resize-w {
+        top: 14px;
+        left: 0;
+        bottom: 14px;
+        width: 8px;
+        cursor: ew-resize;
+      }
+      .cw-resize-ne, .cw-resize-se, .cw-resize-sw, .cw-resize-nw {
+        width: 16px;
+        height: 16px;
+      }
+      .cw-resize-ne {
+        top: 0;
+        right: 0;
+        cursor: nesw-resize;
+      }
+      .cw-resize-se {
+        right: 0;
+        bottom: 0;
+        cursor: nwse-resize;
+      }
+      .cw-resize-sw {
+        left: 0;
+        bottom: 0;
+        cursor: nesw-resize;
+      }
+      .cw-resize-nw {
+        top: 0;
+        left: 0;
+        cursor: nwse-resize;
+      }
+      .cw-resize-se::after {
+        content: "";
+        position: absolute;
+        right: 4px;
+        bottom: 4px;
+        width: 8px;
+        height: 8px;
+        border-right: 2px solid var(--muted);
+        border-bottom: 2px solid var(--muted);
+        opacity: 0.8;
+      }
 
       .cw-input-row {
         display: flex;
