@@ -31,20 +31,38 @@
           </div>
         </label>
         <label class="option">
-          <input type="radio" name="provider" value="chatgpt-session" />
-          <div>
-            <div class="opt-title">ChatGPT — chatgpt.com session</div>
-            <div class="opt-desc">Uses your logged-in chatgpt.com cookies. May fail with proof-of-work; falls back to a clear error.</div>
-          </div>
-        </label>
-        <label class="option">
           <input type="radio" name="provider" value="chatgpt-api" />
           <div>
             <div class="opt-title">ChatGPT — OpenAI API key</div>
-            <div class="opt-desc">Pay-per-token via api.openai.com. Stable.</div>
+            <div class="opt-desc">Pay-per-token via api.openai.com. Stable and avoids browser-session challenges.</div>
+          </div>
+        </label>
+        <label class="option">
+          <input type="radio" name="provider" value="chatgpt-session" />
+          <div>
+            <div class="opt-title">ChatGPT — chatgpt.com session</div>
+            <div class="opt-desc">Uses your logged-in ChatGPT session. Experimental; may fail if ChatGPT asks for Turnstile.</div>
+          </div>
+        </label>
+        <label class="option">
+          <input type="radio" name="provider" value="gemini-session" />
+          <div>
+            <div class="opt-title">Gemini — gemini.google.com session</div>
+            <div class="opt-desc">Uses your logged-in Gemini web session. Experimental.</div>
           </div>
         </label>
       </div>
+    </section>
+
+    <section class="card">
+      <h2>Behavior</h2>
+      <label class="option">
+        <input id="incognito" type="checkbox" />
+        <div>
+          <div class="opt-title">Use incognito/private chats by default</div>
+          <div class="opt-desc">Session providers use private or history-disabled chats when the provider supports it.</div>
+        </div>
+      </label>
     </section>
 
     <section class="card">

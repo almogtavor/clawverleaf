@@ -5,12 +5,19 @@ export function resetClaudeSession(state) {
   delete state.orgId;
   delete state.convId;
   delete state.parentId;
+  delete state.incognito;
 }
 
-export async function sendToClaude(prompt, state) {
+export async function sendToClaude(prompt, state, config) {
+  const incognito = !config || config.incognito !== false;
   if (!state.orgId) state.orgId = await fetchOrgId();
+  if (state.incognito !== undefined && state.incognito !== incognito) {
+    delete state.convId;
+    delete state.parentId;
+  }
+  state.incognito = incognito;
   if (!state.convId) {
-    state.convId = await createConversation(state.orgId);
+    state.convId = await createConversation(state.orgId, incognito);
     state.parentId = ROOT_PARENT;
   }
   const text = await sendMessage(state.orgId, state.convId, prompt);
@@ -29,9 +36,10 @@ async function fetchOrgId() {
   return chat.uuid;
 }
 
-async function createConversation(orgId) {
+async function createConversation(orgId, incognito) {
   const uuid = crypto.randomUUID();
-  const r = await fetch(`${BASE}/api/organizations/${orgId}/chat_conversations?incognito=true`, {
+  const url = `${BASE}/api/organizations/${orgId}/chat_conversations${incognito ? '?incognito=true' : ''}`;
+  const r = await fetch(url, {
     method: 'POST',
     credentials: 'include',
     headers: {
@@ -43,8 +51,8 @@ async function createConversation(orgId) {
       uuid,
       name: 'Clawverleaf edit',
       message: '',
-      is_incognito: true,
-      incognito: true,
+      is_incognito: incognito,
+      incognito,
       include_conversation_preferences: true
     })
   });

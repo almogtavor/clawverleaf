@@ -9,10 +9,12 @@
     'claude-session': 'Claude (session)',
     'claude-api': 'Claude (API key)',
     'chatgpt-session': 'ChatGPT (session)',
-    'chatgpt-api': 'ChatGPT (API key)'
+    'chatgpt-api': 'ChatGPT (API key)',
+    'gemini-session': 'Gemini (session)'
   };
   const DEFAULT_CONFIG = {
     provider: 'claude-session',
+    incognito: true,
     anthropicApiKey: '',
     anthropicModel: 'claude-opus-4-7',
     openaiApiKey: '',
@@ -105,7 +107,11 @@
         resolve(Object.assign({}, DEFAULT_CONFIG));
         return;
       }
-      storage.get(DEFAULT_CONFIG, (cfg) => resolve(Object.assign({}, DEFAULT_CONFIG, cfg || {})));
+      storage.get(DEFAULT_CONFIG, (cfg) => {
+        const config = normalizeConfig(cfg);
+        if (cfg && cfg.provider !== config.provider) setConfig({ provider: config.provider });
+        resolve(config);
+      });
     });
   }
 
@@ -121,6 +127,12 @@
     return typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local
       ? chrome.storage.local
       : null;
+  }
+
+  function normalizeConfig(cfg) {
+    const config = Object.assign({}, DEFAULT_CONFIG, cfg || {});
+    if (!PROVIDER_LABELS[config.provider]) config.provider = DEFAULT_CONFIG.provider;
+    return config;
   }
 
   function mountPanel(ctx) {
@@ -782,6 +794,7 @@
               <option value="claude-api">Claude (API key)</option>
               <option value="chatgpt-session">ChatGPT (session)</option>
               <option value="chatgpt-api">ChatGPT (API key)</option>
+              <option value="gemini-session">Gemini (session)</option>
             </select>
             <button id="cw-close" class="cw-iconbtn" title="Close">✕</button>
           </div>

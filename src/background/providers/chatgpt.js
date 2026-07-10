@@ -9,15 +9,22 @@ export function resetChatGPTSession(state) {
   delete state.convId;
   delete state.parentId;
   delete state.model;
+  delete state.incognito;
 }
 
-export async function sendToChatGPT(prompt, state) {
+export async function sendToChatGPT(prompt, state, config) {
+  const incognito = !config || config.incognito !== false;
   if (!state.deviceId) state.deviceId = crypto.randomUUID();
   if (!state.token || (state.tokenExpires && Date.now() > state.tokenExpires - 60_000)) {
     const t = await fetchSession();
     state.token = t.accessToken;
     state.tokenExpires = t.expires;
   }
+  if (state.incognito !== undefined && state.incognito !== incognito) {
+    delete state.convId;
+    delete state.parentId;
+  }
+  state.incognito = incognito;
   if (!state.parentId) state.parentId = crypto.randomUUID();
   if (!state.model) state.model = 'auto';
 
@@ -32,10 +39,10 @@ export async function sendToChatGPT(prompt, state) {
     );
   }
   if (requirements && (requirements.arkose && requirements.arkose.required)) {
-    throw new Error('ChatGPT is asking for an Arkose/captcha challenge this build cannot solve. Open chatgpt.com, send one message, then retry.');
+    throw new Error('ChatGPT is asking for an Arkose/captcha challenge. Open chatgpt.com and complete the challenge, or switch to OpenAI API, Claude, or Gemini.');
   }
   if (requirements && (requirements.turnstile && requirements.turnstile.required)) {
-    throw new Error('ChatGPT is asking for a Cloudflare Turnstile challenge this build cannot solve. Open chatgpt.com, send one message, then retry.');
+    throw new Error('ChatGPT is asking for a Cloudflare Turnstile challenge. Open chatgpt.com and complete the challenge, or switch to OpenAI API, Claude, or Gemini.');
   }
 
   const reply = await postConversation({
@@ -46,6 +53,7 @@ export async function sendToChatGPT(prompt, state) {
     model: state.model,
     parentId: state.parentId,
     convId: state.convId,
+    incognito,
     prompt
   });
 
@@ -86,7 +94,7 @@ async function fetchRequirements(token, deviceId) {
   return await r.json().catch(() => null);
 }
 
-async function postConversation({ token, deviceId, sentinelToken, proofToken, model, parentId, convId, prompt }) {
+async function postConversation({ token, deviceId, sentinelToken, proofToken, model, parentId, convId, incognito, prompt }) {
   const messageId = crypto.randomUUID();
   const headers = {
     'Authorization': `Bearer ${token}`,
@@ -112,7 +120,7 @@ async function postConversation({ token, deviceId, sentinelToken, proofToken, mo
     model,
     timezone_offset_min: new Date().getTimezoneOffset(),
     suggestions: [],
-    history_and_training_disabled: false,
+    history_and_training_disabled: incognito,
     websocket_request_id: crypto.randomUUID()
   };
   if (convId) body.conversation_id = convId;
@@ -126,8 +134,8 @@ async function postConversation({ token, deviceId, sentinelToken, proofToken, mo
 
   if (!r.ok || !r.body) {
     const t = await r.text().catch(() => '');
-    if (r.status === 403 && /proof|pow|sentinel/i.test(t)) {
-      throw new Error('ChatGPT blocked the request with a proof-of-work challenge. Use the Claude provider for now.');
+    if (r.status === 403 && /proof|pow|sentinel|turnstile|arkose|captcha/i.test(t)) {
+      throw new Error('ChatGPT blocked the request with a browser challenge. Open chatgpt.com and complete any challenge, or switch to OpenAI API, Claude, or Gemini.');
     }
     throw new Error(`chatgpt.com conversation -> ${r.status} ${t.slice(0, 200)}`);
   }

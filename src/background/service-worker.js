@@ -2,14 +2,16 @@ import { sendToClaude, resetClaudeSession } from './providers/claude.js';
 import { sendToChatGPT, resetChatGPTSession } from './providers/chatgpt.js';
 import { sendToClaudeApi, resetClaudeApiSession } from './providers/claude-api.js';
 import { sendToChatGPTApi, resetChatGPTApiSession } from './providers/chatgpt-api.js';
+import { sendToGemini, resetGeminiSession } from './providers/gemini.js';
 
 const sessions = new Map();
 
 const DISPATCH = {
-  'claude-session': { send: sendToClaude, reset: resetClaudeSession, needsConfig: false },
-  'claude-api':     { send: sendToClaudeApi, reset: resetClaudeApiSession, needsConfig: true },
-  'chatgpt-session':{ send: sendToChatGPT, reset: resetChatGPTSession, needsConfig: false },
-  'chatgpt-api':    { send: sendToChatGPTApi, reset: resetChatGPTApiSession, needsConfig: true }
+  'claude-session': { send: sendToClaude, reset: resetClaudeSession },
+  'claude-api':     { send: sendToClaudeApi, reset: resetClaudeApiSession },
+  'chatgpt-session':{ send: sendToChatGPT, reset: resetChatGPTSession },
+  'chatgpt-api':    { send: sendToChatGPTApi, reset: resetChatGPTApiSession },
+  'gemini-session': { send: sendToGemini, reset: resetGeminiSession }
 };
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -50,7 +52,7 @@ async function handleSend({ sessionId, provider, prompt }) {
     session = { provider, state: {} };
     sessions.set(sessionId, session);
   }
-  const config = dispatch.needsConfig ? await getConfig() : null;
+  const config = await getConfig();
   return await dispatch.send(prompt, session.state, config);
 }
 
@@ -67,6 +69,15 @@ async function probe(provider) {
     const data = await r.json();
     if (!data || !data.accessToken) throw new Error('No ChatGPT access token. Log in to chatgpt.com first.');
     return { user: data.user && data.user.email };
+  }
+  if (provider === 'gemini-session') {
+    const r = await fetch('https://gemini.google.com/app', { credentials: 'include' });
+    if (!r.ok) throw new Error(`gemini.google.com/app -> ${r.status}. Log in to Gemini first.`);
+    const html = await r.text();
+    if (!/"SNlM0e":"[^"]+"/.test(html) && !/\\"SNlM0e\\":\\"[^"\\]+\\"/.test(html)) {
+      throw new Error('Could not read Gemini session token. Open gemini.google.com/app, finish sign-in, then retry.');
+    }
+    return { ok: true };
   }
   if (provider === 'claude-api') {
     const cfg = await getConfig();
@@ -108,6 +119,7 @@ async function getConfig() {
     chrome.storage.local.get(
       {
         provider: 'claude-session',
+        incognito: true,
         anthropicApiKey: '',
         anthropicModel: 'claude-opus-4-7',
         openaiApiKey: '',

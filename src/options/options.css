@@ -80,7 +80,7 @@ header h1 {
   background: var(--surface);
   cursor: pointer;
 }
-.option input[type="radio"] {
+.option input[type="radio"], .option input[type="checkbox"] {
   margin: 4px 0 0;
   accent-color: var(--accent);
 }

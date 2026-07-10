@@ -2,13 +2,22 @@
   "manifest_version": 3,
   "name": "Clawverleaf",
   "version": "0.1.0",
-  "description": "Inline AI edits for Overleaf using your Claude or ChatGPT subscription session.",
-  "permissions": ["storage", "scripting"],
+  "description": "Inline AI edits for Overleaf using Claude, ChatGPT, or Gemini.",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "permissions": ["storage"],
   "host_permissions": [
     "https://www.overleaf.com/*",
     "https://*.overleaf.com/*",
     "https://claude.ai/*",
-    "https://chatgpt.com/*"
+    "https://chatgpt.com/*",
+    "https://gemini.google.com/*",
+    "https://api.anthropic.com/*",
+    "https://api.openai.com/*"
   ],
   "background": {
     "service_worker": "src/background/service-worker.js",
